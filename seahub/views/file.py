@@ -54,7 +54,7 @@ from seahub.utils import show_delete_days, render_error, is_org_context, \
     check_filename_with_rename, gen_inner_file_get_url, normalize_file_path, \
     user_traffic_over_limit, do_md5
 from seahub.utils.ip import get_remote_ip
-from seahub.utils.file_types import (IMAGE, PDF, DOCUMENT, SPREADSHEET,
+from seahub.utils.file_types import (IMAGE, SVG, PDF, DOCUMENT, SPREADSHEET,
                                      MARKDOWN, TEXT, SF, OPENDOCUMENT)
 from seahub.utils.star import is_file_starred
 from seahub.utils import HAS_OFFICE_CONVERTER, FILEEXT_TYPE_MAP
@@ -245,8 +245,8 @@ def convert_md_link(file_content, repo_id, username):
                 return a_tag % (href, link_alias)
             except (WikiDoesNotExist, WikiPageMissing):
                 a_tag = '''<p class="wiki-page-missing">%s</p>'''
-                return a_tag % (link_alias)
-        elif filetype == IMAGE:
+                return a_tag % (link_alias)  
+        elif filetype in (IMAGE, SVG):
             # load image to current page
             path = "/" + link_name
             filename = os.path.basename(path)
@@ -375,7 +375,7 @@ def view_file(request, repo_id):
                 ret_dict['err'] = _(u'Invalid file format.')
         elif filetype == PDF:
             handle_pdf(inner_path, obj_id, fileext, ret_dict)
-        elif filetype == IMAGE:
+        elif filetype in (IMAGE, SVG):
             parent_dir = os.path.dirname(path)
             dirs = seafile_api.list_dir_by_commit_and_path(current_commit.repo_id,
                                                            current_commit.id, parent_dir)
@@ -386,7 +386,7 @@ def view_file(request, repo_id):
             for dirent in dirs:
                 if not stat.S_ISDIR(dirent.props.mode):
                     fltype, flext = get_file_type_and_ext(dirent.obj_name)
-                    if fltype == 'Image':
+                    if fltype in (IMAGE, SVG):
                         img_list.append(dirent.obj_name)
 
             if len(img_list) > 1:
@@ -816,7 +816,7 @@ def view_file_via_shared_dir(request, token):
             handle_spreadsheet(inner_path, obj_id, fileext, ret_dict)
         elif filetype == PDF:
             handle_pdf(inner_path, obj_id, fileext, ret_dict)
-        elif filetype == IMAGE:
+        elif filetype in (IMAGE, SVG):
             current_commit = get_commits(repo_id, 0, 1)[0]
             parent_dir = os.path.dirname(path)
             dirs = seafile_api.list_dir_by_commit_and_path(current_commit.repo_id,
@@ -828,7 +828,7 @@ def view_file_via_shared_dir(request, token):
             for dirent in dirs:
                 if not stat.S_ISDIR(dirent.props.mode):
                     fltype, flext = get_file_type_and_ext(dirent.obj_name)
-                    if fltype == 'Image':
+                    if fltype in (IMAGE, SVG):
                         img_list.append(dirent.obj_name)
 
             if len(img_list) > 1:

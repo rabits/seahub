@@ -14,7 +14,7 @@ from seahub.utils import EMPTY_SHA1
 from seahub.utils.slugify import slugify
 from seahub.utils import render_error, render_permission_error, string2list, \
     gen_file_get_url, get_file_type_and_ext, gen_inner_file_get_url
-from seahub.utils.file_types import IMAGE
+from seahub.utils.file_types import (IMAGE, SVG)
 from models import WikiPageMissing, WikiDoesNotExist, GroupWiki, PersonalWiki
 
 
@@ -138,7 +138,7 @@ def convert_wiki_link(content, url_prefix, repo_id, username):
             except (WikiDoesNotExist, WikiPageMissing):
                 a_tag = '''<a class="wiki-page-missing" href='%s'>%s</a>'''
                 return a_tag % (smart_str(url_prefix + page_name.replace('/', '-') + '/'), page_alias)
-        elif filetype == IMAGE:
+        elif filetype in (IMAGE, SVG):
             # load image to wiki page
             path = "/" + page_name
             filename = os.path.basename(path)
@@ -150,7 +150,10 @@ def convert_wiki_link(content, url_prefix, repo_id, username):
                     (url_prefix + '/' + page_name.replace('/', '-'), page_name)
 
             token = seaserv.web_get_access_token(repo_id, obj_id, 'view', username)
-            ret = '<img class="wiki-image" src="%s" alt="%s" />' % (gen_file_get_url(token, filename), filename)
+            if filetype == SVG:
+                ret = '<img class="svg-image" src="%s" alt="%s" />' % (gen_file_get_url(token, filename), filename)
+            else:
+                ret = '<img class="wiki-image" src="%s" alt="%s" />' % (gen_file_get_url(token, filename), filename)
             return smart_str(ret)
         else:
             from seahub.base.templatetags.seahub_tags import file_icon_filter

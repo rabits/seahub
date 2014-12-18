@@ -1,12 +1,22 @@
 {% extends 'view_file_base.html' %}
 {% load i18n %}
 
+{% block extra_style %}{{block.super}}
+<style type="text/css">
+#file-view { text-align:center; padding:30px 0; }
+</style>
+{% endblock %}
+
 {% block extra_script %}{{ block.super }}
 <script type="text/javascript">
     if (!$.browser.mozilla && !$.browser.safari && !($.browser.msie && parseInt($.browser.version) > 8)) {
         $('#file-view').html('<div id="file-view-tip"><p>{% trans "To view it online, you can use firefox, chrome or IE 9." %}</p></div>');
     } else {
-        $('#file-view').html('<iframe src="{{ raw_path }}" frameborder="0" id="svg-view"></iframe>');
+        $.ajax({
+            url: "{{ raw_path }}",
+            dataType: 'html',
+            success: function(data) { $('#file-view').html(data); }
+        })
     }
 </script>
 {% endblock %}

@@ -116,6 +116,15 @@ $('#wiki-content')
     }
 );  
 
+$('#wiki-content').find('img.svg-image').each(function(){
+    var element = $(this);
+    $.ajax({
+        url: $(this).attr('src'),
+        dataType: 'html',
+        success: function(data) { element.replaceWith(data); }
+    })
+})
+
 $('#page-create').click(function() {
     $('#page-create-form').modal({appendTo: '#main', autoResize: true});
 })

@@ -99,7 +99,7 @@ PREVIEW_FILEEXT = {
     IMAGE: ('gif', 'jpeg', 'jpg', 'png', 'ico', 'bmp'),
     DOCUMENT: ('doc', 'docx', 'ppt', 'pptx'),
     SPREADSHEET: ('xls', 'xlsx'),
-    # SVG: ('svg',),
+    SVG: ('svg',),
     PDF: ('pdf',),
     OPENDOCUMENT: ('odt', 'fodt', 'odp', 'fodp', 'ods', 'fods'),
     MARKDOWN: ('markdown', 'md'),
