@@ -394,7 +394,10 @@ $(function() {
             cancel_all_btn.removeClass('hide');
             close_icon.addClass('hide');
 
-            popup.fileupload('option', 'formData', {'parent_dir': dirents.path });
+            var path = dirents.path;
+            popup.fileupload('option', 'formData', {
+                'parent_dir': path == '/' ? path : path + '/'
+            });
 
             {% if enable_upload_folder %}
             // when add folder, a subdirectory will be shown as '.'. rm it.
@@ -464,7 +467,9 @@ $(function() {
                 file_uploaded.relative_path = file_path.substring(0, file_path.lastIndexOf('/') + 1) + file_uploaded.name;
             }
 
-            if (data.formData.parent_dir != dirents.path) {
+            var path = dirents.path;
+            path = path == '/' ? path : path + '/';
+            if (data.formData.parent_dir != path) {
                 return;
             }
             if (!file_path) {
@@ -490,7 +495,9 @@ $(function() {
             cancel_all_btn.addClass('hide');
             close_icon.removeClass('hide');
 
-            if (popup.fileupload('option','formData').parent_dir != dirents.path) {
+            var path = dirents.path;
+            path = path == '/' ? path : path + '/';
+            if (popup.fileupload('option','formData').parent_dir != path) {
                 return;
             }
             var now = parseInt(new Date().getTime()/1000);
@@ -516,14 +523,13 @@ $(function() {
                 uploaded_files = [];
             }
             if (new_dir_names.length > 0) {
-                var path = dirents.path;
                 $(new_dir_names).each(function(index, new_name) {
                     var new_dirent = dirents.add({
                         'is_dir': true,
                         'obj_name': new_name,
                         'last_modified': now,
                         'last_update': "{% trans "Just now" %}",
-                        'p_dpath': path == '/' ? path + new_name : path + '/' + new_name,
+                        'p_dpath': path + new_name,
                         'sharelink': '',
                         'sharetoken': '',
                         'uploadlink': '',
