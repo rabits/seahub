@@ -408,6 +408,7 @@ def lib(request, repo_id, path):
             'protocol': protocol,
             'domain': domain,
             'ENABLE_SUB_LIBRARY': ENABLE_SUB_LIBRARY,
+            'enable_upload_folder': ENABLE_UPLOAD_FOLDER,
             #'server_crypto': server_crypto,
             }, context_instance=RequestContext(request))
     
