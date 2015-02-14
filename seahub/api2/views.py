@@ -27,9 +27,10 @@ from django.template.loader import render_to_string
 from django.shortcuts import render_to_response
 from django.utils import timezone
 
-from authentication import TokenAuthentication
-from serializers import AuthTokenSerializer, AccountSerializer
-from utils import is_repo_writable, is_repo_accessible, calculate_repo_info, \
+from .throttling import ScopedRateThrottle
+from .authentication import TokenAuthentication
+from .serializers import AuthTokenSerializer, AccountSerializer
+from .utils import is_repo_writable, is_repo_accessible, calculate_repo_info, \
     api_error, get_file_size, prepare_starred_files, \
     get_groups, get_group_and_contacts, prepare_events, \
     get_person_msgs, api_group_check, get_email, get_timestamp, \
@@ -37,8 +38,7 @@ from utils import is_repo_writable, is_repo_accessible, calculate_repo_info, \
 from seahub.avatar.templatetags.avatar_tags import api_avatar_url
 from seahub.avatar.templatetags.group_avatar_tags import api_grp_avatar_url
 from seahub.base.accounts import User
-from seahub.base.models import FileDiscuss, UserStarredFiles, \
-    DirFilesLastModifiedInfo, DeviceToken
+from seahub.base.models import FileDiscuss, UserStarredFiles, DeviceToken
 from seahub.base.templatetags.seahub_tags import email2nickname
 from seahub.group.models import GroupMessage, MessageReply, MessageAttachment
 from seahub.group.signals import grpmsg_added, grpmsg_reply_added
@@ -63,7 +63,7 @@ from seahub.utils.star import star_file, unstar_file
 from seahub.utils.file_types import IMAGE, DOCUMENT
 from seahub.views import validate_owner, is_registered_user, \
     group_events_data, get_diff, create_default_library, get_owned_repo_list, \
-    list_inner_pub_repos, get_virtual_repos_by_owner
+    list_inner_pub_repos, get_virtual_repos_by_owner, check_folder_permission
 from seahub.views.ajax import get_share_in_repo_list, get_groups_by_user, \
     get_group_repos
 from seahub.views.file import get_file_view_path_and_perm, send_file_download_msg
@@ -89,9 +89,7 @@ from seaserv import seafserv_rpc, seafserv_threaded_rpc, server_repo_size, \
     list_personal_repos_by_owner, check_quota, \
     list_share_repos, get_group_repos_by_owner, get_group_repoids, \
     list_inner_pub_repos_by_owner, \
-    remove_share, unshare_group_repo, \
-    unset_inner_pub_repo, get_user_quota, \
-    get_user_share_usage, get_user_quota_usage, CALC_SHARE_USAGE, get_group, \
+    remove_share, unshare_group_repo, unset_inner_pub_repo, get_group, \
     get_commit, get_file_id_by_path, MAX_DOWNLOAD_DIR_SIZE, edit_repo, \
     ccnet_threaded_rpc, get_personal_groups, seafile_api, check_group_staff
 
@@ -118,8 +116,11 @@ class Ping(APIView):
     """
     Returns a simple `pong` message when client calls `api2/ping/`.
     For example:
-    	curl http://127.0.0.1:8000/api2/ping/
+        curl http://127.0.0.1:8000/api2/ping/
     """
+    throttle_classes = (ScopedRateThrottle, )
+    throttle_scope = 'ping'
+
     def get(self, request, format=None):
         return Response('pong')
 
@@ -130,10 +131,11 @@ class AuthPing(APIView):
     """
     Returns a simple `pong` message when client provided an auth token.
     For example:
-    	curl -H "Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b" http://127.0.0.1:8000/api2/auth/ping/
+        curl -H "Authorization: Token 9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b" http://127.0.0.1:8000/api2/auth/ping/
     """
     authentication_classes = (TokenAuthentication, )
     permission_classes = (IsAuthenticated,)
+    throttle_classes = (UserRateThrottle, )
 
     def get(self, request, format=None):
         return Response('pong')
@@ -143,7 +145,7 @@ class ObtainAuthToken(APIView):
     """
     Returns auth token if username and password are valid.
     For example:
-    	curl -d "username=foo@example.com&password=123456" http://127.0.0.1:8000/api2/auth-token/
+        curl -d "username=foo@example.com&password=123456" http://127.0.0.1:8000/api2/auth-token/
     """
     throttle_classes = (AnonRateThrottle, )
     permission_classes = ()
@@ -223,14 +225,8 @@ class Account(APIView):
         info['is_staff'] = user.is_staff
         info['is_active'] = user.is_active
         info['create_time'] = user.ctime
-
-        info['total'] = get_user_quota(email)
-        if CALC_SHARE_USAGE:
-            my_usage = get_user_quota_usage(email)
-            share_usage = get_user_share_usage(email)
-            info['usage'] = my_usage + share_usage
-        else:
-            info['usage'] = get_user_quota_usage(email)
+        info['total'] = seafile_api.get_user_quota(email)
+        info['usage'] = seafile_api.get_user_self_usage(email)
 
         return Response(info)
 
@@ -307,15 +303,9 @@ class AccountInfo(APIView):
         info = {}
         email = request.user.username
         info['email'] = email
-        info['total'] = get_user_quota(email)
         info['nickname'] = email2nickname(email)
-
-        if CALC_SHARE_USAGE:
-            my_usage = get_user_quota_usage(email)
-            share_usage = get_user_share_usage(email)
-            info['usage'] = my_usage + share_usage
-        else:
-            info['usage'] = get_user_quota_usage(email)
+        info['total'] = seafile_api.get_user_quota(email)
+        info['usage'] = seafile_api.get_user_self_usage(email)
 
         return Response(info)
 
@@ -713,8 +703,8 @@ class Repo(APIView):
         username = request.user.username
         repo = seafile_api.get_repo(repo_id)
         if not repo:
-            return api_error(status.HTTP_400_BAD_REQUEST, \
-                    'Library does not exist.')
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Library does not exist.')
 
         # check permission
         if is_org_context(request):
@@ -832,8 +822,13 @@ class UploadLinkView(APIView):
     throttle_classes = (UserRateThrottle, )
 
     def get(self, request, repo_id, format=None):
-        if check_permission(repo_id, request.user.username) != 'rw':
-            return api_error(status.HTTP_403_FORBIDDEN, "Can not access repo")
+        parent_dir = request.GET.get('p', None)
+        if parent_dir is None:
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Missing argument.')
+
+        if check_folder_permission(repo_id, parent_dir, request.user.username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         if check_quota(repo_id) < 0:
             return api_error(HTTP_520_OPERATION_FAILED, 'Above quota')
@@ -849,8 +844,13 @@ class UpdateLinkView(APIView):
     throttle_classes = (UserRateThrottle, )
 
     def get(self, request, repo_id, format=None):
-        if check_permission(repo_id, request.user.username) != 'rw':
-            return api_error(status.HTTP_403_FORBIDDEN, "Can not access repo")
+        parent_dir = request.GET.get('p', None)
+        if parent_dir is None:
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Missing argument.')
+
+        if check_folder_permission(repo_id, parent_dir, request.user.username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         if check_quota(repo_id) < 0:
             return api_error(HTTP_520_OPERATION_FAILED, 'Above quota')
@@ -866,8 +866,13 @@ class UploadBlksLinkView(APIView):
     throttle_classes = (UserRateThrottle, )
 
     def get(self, request, repo_id, format=None):
-        if check_permission(repo_id, request.user.username) != 'rw':
-            return api_error(status.HTTP_403_FORBIDDEN, "Can not access repo")
+        parent_dir = request.GET.get('p', None)
+        if parent_dir is None:
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Missing argument.')
+
+        if check_folder_permission(repo_id, parent_dir, request.user.username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         if check_quota(repo_id) < 0:
             return api_error(HTTP_520_OPERATION_FAILED, 'Above quota')
@@ -883,8 +888,13 @@ class UpdateBlksLinkView(APIView):
     throttle_classes = (UserRateThrottle, )
 
     def get(self, request, repo_id, format=None):
-        if check_permission(repo_id, request.user.username) != 'rw':
-            return api_error(status.HTTP_403_FORBIDDEN, "Can not access repo")
+        parent_dir = request.GET.get('p', None)
+        if parent_dir is None:
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Missing argument.')
+
+        if check_folder_permission(repo_id, parent_dir, request.user.username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         if check_quota(repo_id) < 0:
             return api_error(HTTP_520_OPERATION_FAILED, 'Above quota')
@@ -901,9 +911,6 @@ def get_dir_entrys_by_id(request, repo, path, dir_id):
         return api_error(HTTP_520_OPERATION_FAILED,
                          "Failed to list dir.")
 
-    mtimes = DirFilesLastModifiedInfo.objects.get_dir_files_last_modified(
-        repo.id, path, dir_id)
-
     dir_list, file_list = [], []
     for dirent in dirs:
         dtype = "file"
@@ -911,16 +918,16 @@ def get_dir_entrys_by_id(request, repo, path, dir_id):
         if stat.S_ISDIR(dirent.mode):
             dtype = "dir"
         else:
-            try:
+            if repo.version == 0:
                 entry["size"] = get_file_size(repo.store_id, repo.version,
                                               dirent.obj_id)
-            except Exception, e:
-                entry["size"] = 0
+            else:
+                entry["size"] = dirent.size
 
         entry["type"] = dtype
         entry["name"] = dirent.obj_name
         entry["id"] = dirent.obj_id
-        entry["mtime"] = mtimes.get(dirent.obj_name, None)
+        entry["mtime"] = dirent.mtime
         if dtype == 'dir':
             dir_list.append(entry)
         else:
@@ -1140,9 +1147,17 @@ class OpCopyView(APIView):
             return api_error(status.HTTP_403_FORBIDDEN,
                              'You do not have permission to delete file.')
 
-        resp = check_repo_access_permission(request, repo)
-        if resp:
-            return resp
+        parent_dir = request.GET.get('p', None)
+        dst_repo = request.POST.get('dst_repo', None)
+        dst_dir = request.POST.get('dst_dir', None)
+        file_names = request.POST.get("file_names", None)
+
+        if not parent_dir or not file_names or not dst_repo or not dst_dir:
+            return api_error(status.HTTP_400_BAD_REQUEST,
+                             'Missing argument.')
+
+        if check_folder_permission(repo_id, parent_dir, username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         parent_dir = request.GET.get('p', None)
         dst_repo = request.POST.get('dst_repo', None)
@@ -1267,16 +1282,16 @@ class FileView(APIView):
         if not repo:
             return api_error(status.HTTP_404_NOT_FOUND, 'Repo not found.')
 
-        resp = check_repo_access_permission(request, repo)
-        if resp:
-            return resp
-
         path = request.GET.get('p', '')
+        username = request.user.username
+        parent_dir = os.path.dirname(path)
+        if check_folder_permission(repo_id, parent_dir, username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
+
         if not path or path[0] != '/':
             return api_error(status.HTTP_400_BAD_REQUEST,
                              'Path is missing or invalid.')
 
-        username = request.user.username
         operation = request.POST.get('operation', '')
         if operation.lower() == 'rename':
             if not is_repo_writable(repo.id, username):
@@ -1417,13 +1432,13 @@ class FileView(APIView):
             return api_error(status.HTTP_403_FORBIDDEN,
                              'You do not have permission to delete file.')
 
-        resp = check_repo_access_permission(request, repo)
-        if resp:
-            return resp
-
         path = request.GET.get('p', None)
         if not path:
             return api_error(status.HTTP_400_BAD_REQUEST, 'Path is missing.')
+
+        parent_dir = os.path.dirname(path)
+        if check_folder_permission(repo_id, parent_dir, username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         parent_dir_utf8 = os.path.dirname(path).encode('utf-8')
         file_name_utf8 = os.path.basename(path).encode('utf-8')
@@ -1494,12 +1509,17 @@ class FileRevert(APIView):
     throttle_classes = (UserRateThrottle, )
 
     def put(self, request, repo_id, format=None):
-        path = unquote(request.DATA.get('p', '').encode('utf-8'))
+        path = request.DATA.get('p', '')
         if not path:
             return api_error(status.HTTP_400_BAD_REQUEST, 'Path is missing.')
+
+        parent_dir = os.path.dirname(path)
+        username = request.uset.username
+        if check_folder_permission(repo_id, parent_dir, username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
+
+        path = unquote(path.encode('utf-8'))
         commit_id = unquote(request.DATA.get('commit_id', '').encode('utf-8'))
-        if not path:
-            return api_error(status.HTTP_400_BAD_REQUEST, 'Path is missing.')
         try:
             ret = seafserv_threaded_rpc.revert_file (repo_id, commit_id,
                             path, request.user.username)
@@ -1649,11 +1669,8 @@ class DirView(APIView):
         if not repo:
             return api_error(status.HTTP_404_NOT_FOUND, 'Repo not found.')
 
-        resp = check_repo_access_permission(request, repo)
-        if resp:
-            return resp
-
         path = request.GET.get('p', '')
+
         if not path or path[0] != '/':
             return api_error(status.HTTP_400_BAD_REQUEST, "Path is missing.")
         if path == '/':         # Can not make or rename root dir.
@@ -1663,13 +1680,16 @@ class DirView(APIView):
 
         username = request.user.username
         operation = request.POST.get('operation', '')
-        
+
         if operation.lower() == 'mkdir':
             if not is_repo_writable(repo.id, username):
                 return api_error(status.HTTP_403_FORBIDDEN,
                                  'You do not have permission to create folder.')
 
             parent_dir = os.path.dirname(path)
+            if check_folder_permission(repo_id, parent_dir, username) != 'rw':
+                return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
+
             parent_dir_utf8 = parent_dir.encode('utf-8')
             new_dir_name = os.path.basename(path)
             new_dir_name_utf8 = check_filename_with_rename_utf8(repo_id,
@@ -1692,11 +1712,13 @@ class DirView(APIView):
                     quote(new_dir_name_utf8)
             return resp
         elif operation.lower() == 'rename':
+            if check_folder_permission(repo.id, path, username) != 'rw':
+                return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
+
             if not is_repo_writable(repo.id, username):
                 return api_error(status.HTTP_403_FORBIDDEN,
                                  'You do not have permission to rename a folder.')
 
-            parent_dir = os.path.dirname(path)
             old_dir_name = os.path.basename(path)
 
             newname = request.POST.get('newname', '')
@@ -1735,13 +1757,12 @@ class DirView(APIView):
             return api_error(status.HTTP_403_FORBIDDEN,
                              'You do not have permission to delete folder.')
 
-        resp = check_repo_access_permission(request, repo)
-        if resp:
-            return resp
-
         path = request.GET.get('p', None)
         if not path:
             return api_error(status.HTTP_400_BAD_REQUEST, 'Path is missing.')
+
+        if check_folder_permission(repo_id, path, username) != 'rw':
+            return api_error(status.HTTP_403_FORBIDDEN, 'Forbid to access this folder.')
 
         if path == '/':         # Can not delete root path.
             return api_error(status.HTTP_400_BAD_REQUEST, 'Path is invalid.')
@@ -1933,13 +1954,13 @@ class BeShared(APIView):
 
         joined_groups = get_personal_groups_by_user(username)
         for grp in joined_groups:
-        # Get group repos, and for each group repos...
+            # Get group repos, and for each group repos...
             for r_id in get_group_repoids(grp.id):
                 # No need to list my own repo
                 if seafile_api.is_repo_owner(username, r_id):
                     continue
-                 # Convert repo properties due to the different collumns in Repo
-                 # and SharedRepo
+                # Convert repo properties due to the different collumns in Repo
+                # and SharedRepo
                 r = get_repo(r_id)
                 if not r:
                     continue
@@ -2069,9 +2090,7 @@ class PrivateSharedFileView(APIView):
         return get_repo_file(request, repo_id, file_id, file_name, op)
 
 class SharedFileView(APIView):
-# Anyone should be able to access a Shared File assuming they have the token
-#    authentication_classes = (TokenAuthentication, )
-#    permission_classes = (IsAuthenticated,)
+    # Anyone should be able to access a Shared File assuming they have the token
     throttle_classes = (UserRateThrottle, )
 
     def get(self, request, token, format=None):
@@ -2510,10 +2529,12 @@ class EventsView(APIView):
 
         if is_org_context(request):
             org_id = request.user.org.org_id
-            events, start = get_org_user_events(org_id, email, start,
-                                                events_count)
+            events, events_more_offset = get_org_user_events(org_id, email,
+                                                             start,
+                                                             events_count)
         else:
-            events, events_more_offset = get_user_events(email, start, events_count)
+            events, events_more_offset = get_user_events(email, start,
+                                                         events_count)
         events_more = True if len(events) == events_count else False
 
         l = []
@@ -2550,7 +2571,7 @@ class EventsView(APIView):
 
         ret = {
             'events': l,
-            'more':  events_more,
+            'more': events_more,
             'more_offset': events_more_offset,
             }
         return Response(ret)
@@ -3482,31 +3503,18 @@ class OfficeGenerateView(APIView):
 
         return HttpResponse(json.dumps(ret_dict), status=200, content_type=json_content_type)
 
-class ThumbnailGetView(APIView):
+class ThumbnailView(APIView):
     authentication_classes = (TokenAuthentication, )
     permission_classes = (IsAuthenticated,)
     throttle_classes = (UserRateThrottle, )
 
-    def get(self, request, repo_id):
-
-        path = request.GET.get('p', None)
-        if path is None:
-            return api_error(status.HTTP_400_BAD_REQUEST, 'Path is missing.')
-
-        size = request.GET.get('s', None)
-        if size is None:
-            return api_error(status.HTTP_400_BAD_REQUEST, 'Size is missing.')
-
-        obj_id = get_file_id_by_path(repo_id, path)
-        raw_path, inner_path, user_perm = get_file_view_path_and_perm(request,
-                                                                      repo_id,
-                                                                      obj_id, path)
-
-        if user_perm is None:
-            return api_error(status.HTTP_403_FORBIDDEN,
-                             'Permission denied.')
+    def get(self, request, repo_id, path):
 
         repo = get_repo(repo_id)
+        if not repo:
+            return api_error(status.HTTP_404_NOT_FOUND,
+                             'Library not found.')
+
         if repo.encrypted:
             return api_error(status.HTTP_403_FORBIDDEN,
                              'Image thumbnail is not supported in encrypted libraries.')
@@ -3514,6 +3522,23 @@ class ThumbnailGetView(APIView):
         if not ENABLE_THUMBNAIL:
             return api_error(status.HTTP_403_FORBIDDEN,
                              'Thumbnail function is not enabled.')
+
+        size = request.GET.get('s', None)
+        if size is None:
+            return api_error(status.HTTP_400_BAD_REQUEST, 'Size is missing.')
+
+        obj_id = get_file_id_by_path(repo_id, path)
+
+        if obj_id is None:
+            return api_error(status.HTTP_400_BAD_REQUEST, 'Wrong path')
+
+        raw_path, inner_path, user_perm = get_file_view_path_and_perm(request,
+                                                                      repo_id,
+                                                                      obj_id, path)
+
+        if user_perm is None:
+            return api_error(status.HTTP_403_FORBIDDEN,
+                             'Permission denied.')
 
         thumbnail_dir = os.path.join(THUMBNAIL_ROOT, size)
         if not os.path.exists(thumbnail_dir):
@@ -3526,18 +3551,16 @@ class ThumbnailGetView(APIView):
                 image = Image.open(f)
                 image.thumbnail((int(size), int(size)), Image.ANTIALIAS)
                 image.save(thumbnail_file, THUMBNAIL_EXTENSION)
-            except IOError, e:
-                return api_error(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                 "error:" + e.msg)
+            except IOError as e:
+                return api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
         try:
             with open(thumbnail_file, 'rb') as f:
                 thumbnail = f.read()
             f.close()
             return HttpResponse(thumbnail, 'image/' + THUMBNAIL_EXTENSION)
-        except IOError, e:
-            return api_error(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                             "error:" + e.msg)
+        except IOError as e:
+            return api_error(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e))
 
 #Following is only for debug
 # from seahub.auth.decorators import login_required

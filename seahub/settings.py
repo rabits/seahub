@@ -150,7 +150,8 @@ LANGUAGES = (
     ('sk', gettext_noop('Slovak')),
     ('sl', gettext_noop('Slovenian')),
     ('sv', gettext_noop('Svenska')),
-    ('th', gettext_noop('Thai')),
+    ('th', gettext_noop('ไทย')),
+    ('tr', gettext_noop('Türkçe')),
     ('uk', gettext_noop('українська мова')),
     ('zh-cn', gettext_noop(u'简体中文')),
     ('zh-tw', gettext_noop(u'繁體中文')),
@@ -284,11 +285,8 @@ CACHES = {
 
 # rest_framwork
 REST_FRAMEWORK = {
-    'DEFAULT_THROTTLE_CLASSES': (
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
-    ),
     'DEFAULT_THROTTLE_RATES': {
+        'ping': '600/minute',
         'anon': '5/minute',
         'user': '300/minute',
     },
@@ -405,6 +403,20 @@ LOGIN_REMEMBER_DAYS = 7
 SHARE_ACCESS_PASSWD_TIMEOUT = 60 * 60
 
 SEAFILE_VERSION = '3.0.0'
+
+###################
+# Image Thumbnail #
+###################
+
+# Enable or disable thumbnail
+ENABLE_THUMBNAIL = True
+
+# Absolute filesystem path to the directory that will hold thumbnail files.
+THUMBNAIL_ROOT = os.path.join(PROJECT_ROOT, 'seahub/thumbnail/thumb')
+
+THUMBNAIL_EXTENSION = 'png'
+THUMBNAIL_DEFAULT_SIZE = '24'
+PREVIEW_DEFAULT_SIZE = '100'
 
 #################
 # Email sending #
@@ -529,12 +541,3 @@ LOGIN_URL = SITE_ROOT + 'accounts/login'
 
 INNER_FILE_SERVER_ROOT = 'http://127.0.0.1:' + FILE_SERVER_PORT
 
-# Enable or disable thumbnail
-ENABLE_THUMBNAIL = True
-
-# Absolute filesystem path to the directory that will hold thumbnail files.
-THUMBNAIL_ROOT = '%s/seahub/thumbnail/thumb/' % PROJECT_ROOT
-
-THUMBNAIL_EXTENSION = 'png'
-THUMBNAIL_DEFAULT_SIZE = '24'
-PREVIEW_DEFAULT_SIZE = '100'

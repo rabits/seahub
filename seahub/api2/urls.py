@@ -1,12 +1,14 @@
 from django.conf.urls.defaults import *
 
-from views import *
+from .views import *
+from .views_misc import ServerInfoView
 
 
 urlpatterns = patterns('',
     url(r'^ping/$', Ping.as_view()),
     url(r'^auth/ping/$', AuthPing.as_view()),
     url(r'^auth-token/', ObtainAuthToken.as_view()),
+    url(r'^server-info/$', ServerInfoView.as_view()),
 
     # RESTful API
     url(r'^accounts/$', Accounts.as_view(), name="accounts"),
@@ -34,6 +36,7 @@ urlpatterns = patterns('',
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/dir/sub_repo/$', DirSubRepoView.as_view()),
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/dir/share/$', DirShareView.as_view()),
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/dir/download/$', DirDownloadView.as_view()),
+    url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/thumbnail/(?P<path>.+)$', ThumbnailView.as_view(), name='api2-thumbnail'),
     url(r'^starredfiles/', StarredFileView.as_view(), name='starredfiles'),
     url(r'^shared-repos/$', SharedRepos.as_view(), name='sharedrepos'),
     url(r'^shared-repos/(?P<repo_id>[-0-9-a-f]{36})/$', SharedRepo.as_view(), name='sharedrepo'),
@@ -75,7 +78,7 @@ urlpatterns = patterns('',
     url(r'^html/usermsgs/(?P<id_or_email>[^/]+)/$', UserMsgsHtml.as_view()),
     url(r'^html/more_usermsgs/(?P<id_or_email>[^/]+)/$', AjaxUserMsgs.as_view(), name="api_more_usermsgs"),
 
-    # Folowing is only for debug, will be removed 
+    # Folowing is only for debug, will be removed
     #url(r'^html/newreply2/$', api_new_replies),
     #url(r'^html/events2/$', activity2),
     #url(r'^html/more_events/$', events2, name="more_events"),
@@ -87,12 +90,10 @@ urlpatterns = patterns('',
     #url(r'^html/usermsgs2/(?P<id_or_email>[^/]+)/$', api_usermsgs),
     #url(r'^html/more_usermsgs/(?P<id_or_email>[^/]+)/$', api_more_usermsgs, name="api_more_usermsgs"),
 
-
-    # Deprecated                       
+    # Deprecated
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/fileops/delete/$', OpDeleteView.as_view()),
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/fileops/copy/$', OpCopyView.as_view()),
     url(r'^repos/(?P<repo_id>[-0-9-a-f]{36})/fileops/move/$', OpMoveView.as_view()),
-    url(r'^thumbnail/(?P<repo_id>[-0-9a-f]{36})/$', ThumbnailGetView.as_view()),
 )
 
 # serve office converter static files

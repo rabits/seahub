@@ -35,7 +35,8 @@ from seahub.base.decorators import user_mods_check
 from seahub.contacts.models import Contact
 from seahub.contacts.signals import mail_sended
 from seahub.signals import share_file_to_user_successful
-from seahub.views import is_registered_user, check_repo_access_permission
+from seahub.views import is_registered_user, check_repo_access_permission, \
+        check_folder_permission
 from seahub.utils import render_permission_error, string2list, render_error, \
     gen_token, gen_shared_link, gen_shared_upload_link, gen_dir_share_link, \
     gen_file_share_link, IS_EMAIL_CONFIGURED, check_filename_with_rename, \
@@ -172,7 +173,8 @@ def share_to_user(request, repo, to_user, permission):
         messages.success(request, msg)
 
 def check_user_share_quota(username, repo, users=[], groups=[]):
-    """Check whether user has enough quota when share repo to users/groups.
+    """Check whether user has enough share quota when share repo to
+    users/groups. Only used for cloud service.
     """
     if not users and not groups:
         return True
@@ -181,8 +183,10 @@ def check_user_share_quota(username, repo, users=[], groups=[]):
         return True
 
     check_pass = False
-    quota = seafile_api.get_user_quota(username)
-    self_usage = seafile_api.get_user_self_usage(username)
+    share_quota = seafile_api.get_user_share_quota(username)
+    if share_quota == -2:
+        return True             # share quota is unlimited
+
     current_share_usage = seafile_api.get_user_share_usage(username)
 
     share_usage = 0
@@ -192,10 +196,10 @@ def check_user_share_quota(username, repo, users=[], groups=[]):
     if groups:
         grp_members = []
         for group in groups:
-            grp_members += [ e.user_name for e in seaserv.get_group_members(group.id)]
+            grp_members += [e.user_name for e in seaserv.get_group_members(group.id)]
         grp_members = set(grp_members)
-        share_usage += seafile_api.get_repo_size(repo.id) * (len(grp_members) -1)
-    if share_usage + self_usage + current_share_usage < quota:
+        share_usage += seafile_api.get_repo_size(repo.id) * (len(grp_members) - 1)
+    if share_usage + current_share_usage < share_quota:
         check_pass = True
 
     return check_pass
@@ -878,14 +882,14 @@ def send_shared_link(request):
 
             try:
                 if file_shared_type == 'f':
-                    c['file_shared_type'] = "file"
+                    c['file_shared_type'] = _(u"file")
                     send_html_email(_(u'A file is shared to you on %s') % SITE_NAME,
                                     'shared_link_email.html',
                                     c, from_email, [to_email],
                                     reply_to=reply_to
                                     )
                 else:
-                    c['file_shared_type'] = "directory"
+                    c['file_shared_type'] = _(u"directory")
                     send_html_email(_(u'A directory is shared to you on %s') % SITE_NAME,
                                     'shared_link_email.html',
                                     c, from_email, [to_email],
@@ -1101,7 +1105,11 @@ def get_shared_upload_link(request):
             path += '/'
 
     repo = seaserv.get_repo(repo_id)
-    user_perm = check_repo_access_permission(repo.id, request.user)
+    if not repo:
+        messages.error(request, _(u'Library does not exist'))
+        return HttpResponse(status=400, content_type=content_type)
+
+    user_perm = check_folder_permission(repo.id, path, request.user.username)
 
     if user_perm == 'r':
         messages.error(request, _(u'Permission denied'))
